@@ -1,63 +1,56 @@
-import UIKit
 import Flutter
+import UIKit
 
-@UIApplicationMain
-@objc class AppDelegate: FlutterAppDelegate {
-  private var screenshotObserver: NSObjectProtocol?
-  private var screenshotChannel: FlutterMethodChannel?
+public class ScreenshotCallbackPlugin: NSObject, FlutterPlugin {
+  private static var channel: FlutterMethodChannel?
+  private static var observer: NSObjectProtocol?
 
-  override func application(
-    _ application: UIApplication,
-    didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
-  ) -> Bool {
-    // Grab your Flutter view controller
-    let controller = window?.rootViewController as! FlutterViewController
-
-    // Create a MethodChannel matching your Dart side
-    screenshotChannel = FlutterMethodChannel(
+  public static func register(with registrar: FlutterPluginRegistrar) {
+    // match the name your Dart side expects
+    let channel = FlutterMethodChannel(
       name: "flutter.moum/screenshot_callback",
-      binaryMessenger: controller.binaryMessenger
+      binaryMessenger: registrar.messenger()
     )
+    // save for later invokes
+    ScreenshotCallbackPlugin.channel = channel
 
-    // Handle "initialize" and "dispose" calls from Dart
-    screenshotChannel?.setMethodCallHandler { [weak self] call, result in
-      switch call.method {
+    // route incoming calls to our handler
+    registrar.addMethodCallDelegate(ScreenshotCallbackPlugin(), channel: channel)
+  }
+
+  public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    switch call.method {
       case "initialize":
-        self?.startObservingScreenshots()
+        // remove any existing observer
+        if let obs = ScreenshotCallbackPlugin.observer {
+          NotificationCenter.default.removeObserver(obs)
+          ScreenshotCallbackPlugin.observer = nil
+        }
+        // attach new observer
+        ScreenshotCallbackPlugin.observer = NotificationCenter.default.addObserver(
+          forName: UIApplication.userDidTakeScreenshotNotification,
+          object: nil,
+          queue: .main
+        ) { _ in
+          ScreenshotCallbackPlugin.channel?.invokeMethod("onCallback", arguments: nil)
+        }
         result("initialize")
+
       case "dispose":
-        self?.stopObservingScreenshots()
+        if let obs = ScreenshotCallbackPlugin.observer {
+          NotificationCenter.default.removeObserver(obs)
+          ScreenshotCallbackPlugin.observer = nil
+        }
         result("dispose")
+
       default:
         result(FlutterMethodNotImplemented)
-      }
-    }
-
-    // Usual plugin registration
-    GeneratedPluginRegistrant.register(with: self)
-    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
-  }
-
-  private func startObservingScreenshots() {
-    // If already observing, remove first
-    stopObservingScreenshots()
-    screenshotObserver = NotificationCenter.default.addObserver(
-      forName: UIApplication.userDidTakeScreenshotNotification,
-      object: nil,
-      queue: .main
-    ) { [weak self] _ in
-      self?.screenshotChannel?.invokeMethod("onCallback", arguments: nil)
-    }
-  }
-
-  private func stopObservingScreenshots() {
-    if let obs = screenshotObserver {
-      NotificationCenter.default.removeObserver(obs)
-      screenshotObserver = nil
     }
   }
 
   deinit {
-    stopObservingScreenshots()
+    if let obs = ScreenshotCallbackPlugin.observer {
+      NotificationCenter.default.removeObserver(obs)
+    }
   }
 }
